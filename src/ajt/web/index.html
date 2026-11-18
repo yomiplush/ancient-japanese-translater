@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>古文 → 現代口語 ライブ翻訳</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="mark">文</span>
+    <div>
+      <h1>古文 → 現代口語</h1>
+      <p class="sub">iPhone IPカメラ · <span id="providerLabel">offline</span></p>
+    </div>
+  </div>
+  <div class="controls">
+    <button id="btnCamera" class="btn">カメラ開始</button>
+    <button id="btnFile" class="btn ghost">画像を読む</button>
+    <label class="switch" title="遮蔽物をかざしたときに自動で翻訳を止める">
+      <input type="checkbox" id="autoToggle" checked>
+      <span>自動更新</span>
+    </label>
+    <input type="file" id="fileInput" accept="image/*" hidden>
+  </div>
+</header>
+
+<main class="grid">
+  <section class="panel preview">
+    <div class="panel-head">
+      <h2>カメラ</h2>
+      <span class="pill" id="statusPill">待機中</span>
+    </div>
+    <div class="viewport" id="viewport">
+      <video id="video" playsinline muted hidden></video>
+      <img id="shot" alt="" hidden>
+      <canvas id="overlay"></canvas>
+      <div class="placeholder" id="placeholder">
+        <p>「カメラ開始」でこのPCのカメラを使うか、</p>
+        <p><strong>ペアリング</strong>からiPhoneを接続してください。</p>
+      </div>
+    </div>
+    <div class="pair" id="pairBox">
+      <div class="qr" id="qrBox"></div>
+      <div class="pair-text">
+        <p class="pair-title">iPhone を接続</p>
+        <p class="pair-hint">QRコードをiPhoneで読み取り、<strong>カメラページ</strong>を開いてください。</p>
+        <code id="pairUrl">…</code>
+        <button class="btn tiny ghost" id="btnCopy">URLをコピー</button>
+      </div>
+    </div>
+    <div class="metrics" id="metrics">
+      <span>OCR <b id="mOcr">-</b></span>
+      <span>翻訳 <b id="mTotal">-</b></span>
+      <span>認識 <b id="mConf">-</b></span>
+      <span>フレーム <b id="mFrames">0</b></span>
+    </div>
+  </section>
+
+  <section class="panel result">
+    <div class="panel-head">
+      <h2>現代口語訳</h2>
+      <span class="pill accent" id="backendPill">—</span>
+    </div>
+    <div class="modern" id="modern">
+      <p class="muted">まだ読み取っていません。</p>
+    </div>
+    <div class="era" id="era"></div>
+
+    <details class="block" open>
+      <summary>OCR 原文 <span class="count" id="srcLen">0</span></summary>
+      <pre id="source" class="text">—</pre>
+      <div class="row">
+        <button class="btn tiny ghost" id="btnCopySrc">コピー</button>
+        <button class="btn tiny ghost" id="btnEdit">編集して再翻訳</button>
+      </div>
+    </details>
+
+    <details class="block">
+      <summary>語注 <span class="count" id="glossCount">0</span></summary>
+      <ul class="glosses" id="glosses"><li class="muted">—</li></ul>
+    </details>
+
+    <details class="block">
+      <summary>検出した行 <span class="count" id="lineCount">0</span></summary>
+      <ol class="lines" id="lines"></ol>
+    </details>
+  </section>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

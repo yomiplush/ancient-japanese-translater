@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#10100f">
+<title>古文カメラ</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0b0a; color: #ece9e2;
+    font-family: "Noto Sans CJK JP", -apple-system, system-ui, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  video { width: 100%; height: 100%; object-fit: cover; }
+  #hud { position: fixed; inset: auto 0 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, #0000, #000c 45%); font-size: 13px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #status { font-family: ui-monospace, monospace; font-size: 12px; color: #a09c92; }
+  #status.on { color: #8fb3a1; }
+  #status.err { color: #c96b5a; }
+  #last { margin: 8px 0 0; font-family: "Noto Serif CJK JP", serif; font-size: 15px;
+    line-height: 1.7; color: #ece9e2; min-height: 3.4em; }
+  button { font: inherit; font-size: 15px; padding: 11px 22px; border-radius: 10px;
+    border: 1px solid #4a3a21; background: #2a2318; color: #ece9e2; }
+  button.stop { border-color: #5c3029; color: #e0a196; background: #2a1c19; }
+  #gate { position: fixed; top: 0; left: 0; right: 0; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background: linear-gradient(180deg, #000c, #0000); font-size: 12px; font-family: ui-monospace, monospace;
+    color: #a09c92; display: flex; justify-content: space-between; gap: 10px; }
+  .frame-guide { position: fixed; inset: 12vh 8vw; border: 1px dashed #ffffff26; border-radius: 12px;
+    pointer-events: none; }
+  .frame-guide::after { content: "本文を枠内に"; position: absolute; top: -20px; left: 2px;
+    font-size: 11px; color: #ffffff55; font-family: ui-monospace, monospace; }
+  #err { position: fixed; inset: 0; display: none; place-items: center; padding: 30px; text-align: center;
+    background: #0b0b0a; font-size: 14px; line-height: 1.8; }
+  #err.show { display: grid; }
+  #err code { font-family: ui-monospace, monospace; font-size: 12px; color: #d8a24a; word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="stage"><video id="video" playsinline muted autoplay></video></div>
+<div class="frame-guide" id="guide" hidden></div>
+
+<div id="gate">
+  <span id="conn">接続待ち</span>
+  <span id="fps">—</span>
+</div>
+
+<div id="hud">
+  <div class="row">
+    <div>
+      <div id="status">停止中</div>
+      <div id="last"></div>
+    </div>
+    <button id="btn">開始</button>
+  </div>
+</div>
+
+<div id="err">
+  <div>
+    <p><strong>カメラを開けませんでした</strong></p>
+    <p id="errMsg"></p>
+    <p>HTTPSで開いているか確認してください。<br>
+       <code id="errUrl"></code></p>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const TOKEN = "__TOKEN__";
+  const $ = (id) => document.getElementById(id);
+  const video = $("video"), btn = $("btn"), statusEl = $("status"),
+        lastEl = $("last"), connEl = $("conn"), fpsEl = $("fps"),
+        errBox = $("err"), guide = $("guide");
+
+  const state = { on: false, busy: false, timer: null, interval: 1400, sent: 0, t0: 0 };
+
+  const work = document.createElement("canvas");
+
+  function setStatus(text, cls = "") {
+    statusEl.textContent = text;
+    statusEl.className = cls;
+  }
+
+  function grab() {
+    if (!video.videoWidth) return null;
+    // The book fills the frame; 1280px on the long edge is the sweet spot for
+    // OCR accuracy vs upload time over Wi-Fi.
+    const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
+    work.width = Math.round(video.videoWidth * scale);
+    work.height = Math.round(video.videoHeight * scale);
+    work.getContext("2d").drawImage(video, 0, 0, work.width, work.height);
+    return new Promise((r) => work.toBlob(r, "image/jpeg", 0.82));
+  }
+
+  async function send(blob) {
+    const form = new FormData();
+    form.append("file", blob, "f.jpg");
+    const res = await fetch(`/api/frame?translate=1&t=${encodeURIComponent(TOKEN)}`, {
+      method: "POST", body: form,
+    });
+    if (res.status === 401) throw new Error("認証エラー（QRを読み直してください）");
+    if (!res.ok) throw new Error("サーバーエラー " + res.status);
+    return res.json();
+  }
+
+  async function tick() {
+    if (!state.on || state.busy) return;
+    const blob = await grab();
+    if (!blob) return;
+    state.busy = true;
+    setStatus("送信中…", "on");
+    try {
+      const data = await send(blob);
+      state.sent++;
+      const now = performance.now();
+      if (!state.t0) state.t0 = now;
+      const rate = state.sent / ((now - state.t0) / 1000);
+      fpsEl.textContent = rate.toFixed(2) + " fps";
+
+      if (data.skipped) {
+        setStatus("変化なし", "on");
+        state.interval = Math.min(4000, state.interval + 120);
+      } else {
+        const tr = data.translation || {};
+        const text = tr.modern || (data.ocr && data.ocr.text) || "";
+        if (text) lastEl.textContent = text.slice(0, 220);
+        setStatus("ライブ", "on");
+        state.interval = Math.max(700, Math.min(4000, (data.total_ms || 1200) * 0.9));
+      }
+      connEl.textContent = "接続中 · " + (data.stats ? data.stats.frames : 0) + " 枚";
+    } catch (e) {
+      setStatus("エラー", "err");
+      connEl.textContent = e.message;
+      state.interval = Math.min(4000, state.interval + 500);
+    } finally {
+      state.busy = false;
+      if (state.on) state.timer = setTimeout(tick, state.interval);
+    }
+  }
+
+  async function start() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 }, height: { ideal: 1440 },
+        },
+        audio: false,
+      });
+      video.srcObject = stream;
+      await video.play();
+      state.on = true; state.sent = 0; state.t0 = 0; state.interval = 1200;
+      btn.textContent = "停止"; btn.classList.add("stop");
+      guide.hidden = false;
+      setStatus("ライブ", "on");
+      if (navigator.wakeLock) {
+        navigator.wakeLock.request("screen").catch(() => {});
+      }
+      tick();
+    } catch (e) {
+      errBox.classList.add("show");
+      $("errMsg").textContent = e.message;
+      $("errUrl").textContent = location.href;
+      setStatus("カメラ不可", "err");
+    }
+  }
+
+  function stop() {
+    state.on = false;
+    clearTimeout(state.timer);
+    const s = video.srcObject;
+    if (s) s.getTracks().forEach((t) => t.stop());
+    video.srcObject = null;
+    btn.textContent = "開始"; btn.classList.remove("stop");
+    guide.hidden = true;
+    setStatus("停止中");
+  }
+
+  btn.addEventListener("click", () => (state.on ? stop() : start()));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && state.on) stop();
+  });
+
+  if (!TOKEN) {
+    errBox.classList.add("show");
+    $("errMsg").textContent = "URLにトークンがありません。PCの画面に出ているQRコードから開き直してください。";
+    $("errUrl").textContent = location.href;
+  }
+  connEl.textContent = location.protocol === "https:" ? "HTTPS" : "HTTP（カメラ不可の可能性）";
+})();
+</script>
+</body>
+</html>
