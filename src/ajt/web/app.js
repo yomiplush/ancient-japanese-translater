@@ -304,6 +304,7 @@
       els.pairUrl.textContent = info.url;
       els.pairUrl.title = info.url;
       state.token = state.token || info.token;
+      renderTailscale(info.tailscale, info.url);
     } catch (err) {
       // ペアリング情報はPC上でのみ配信される。別端末からGUIを開いた場合は
       // トークンからカメラURLを組み立てて、QRの代わりにURLを見せる。
@@ -323,6 +324,60 @@
     if (params.get("t")) {
       state.token = params.get("t");
       els.pairUrl.textContent = location.origin + "/camera?t=" + state.token;
+    }
+  }
+
+  /* Tailscale status: the tailnet HTTPS URL is the only way to use the browser
+     camera on iOS without a certificate warning, so make its state obvious. */
+  function renderTailscale(ts, url) {
+    const el = $("tsStatus");
+    const btn = $("btnTailscale");
+    if (!ts || !ts.available) {
+      el.className = "pair-ts off";
+      el.textContent = "Tailscale 未使用（LAN 内のみ）";
+      btn.hidden = true;
+      return;
+    }
+    if (ts.https_serving) {
+      el.className = "pair-ts on";
+      el.textContent = "Tailscale HTTPS 有効 · " + ts.dns_name;
+      btn.textContent = "HTTPS を解除";
+      btn.dataset.mode = "off";
+    } else {
+      el.className = "pair-ts off";
+      el.textContent = "Tailscale 検出 · HTTPS 未設定（iOS カメラは使えません）";
+      btn.textContent = "Tailscale HTTPS を有効化";
+      btn.dataset.mode = "on";
+    }
+    btn.hidden = false;
+    if (url && url.startsWith("https://")) {
+      el.textContent += " · カメラ可";
+    }
+  }
+
+  async function toggleTailscale() {
+    const btn = $("btnTailscale");
+    const enable = btn.dataset.mode !== "off";
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = "設定中…";
+    try {
+      const res = await fetchJSON(
+        `/api/tailscale/${enable ? "enable" : "disable"}`,
+        { method: "POST" }
+      );
+      if (!res.ok) throw new Error(res.output || "失敗しました");
+      toast(enable ? "Tailscale HTTPS を有効にしました" : "Tailscale HTTPS を解除しました");
+      const info = await fetchJSON("/api/pair");
+      els.qrBox.innerHTML = info.svg;
+      els.pairUrl.textContent = info.url;
+      els.pairUrl.title = info.url;
+      renderTailscale(info.tailscale, info.url);
+    } catch (err) {
+      toast("Tailscale 設定に失敗: " + err.message, 5000);
+      btn.textContent = original;
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -361,6 +416,8 @@
       toast("URLをコピーしました");
     } catch (_) { toast("コピーできませんでした"); }
   });
+
+  $("btnTailscale").addEventListener("click", toggleTailscale);
 
   $("btnCopySrc").addEventListener("click", async () => {
     try {

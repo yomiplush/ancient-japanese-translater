@@ -47,7 +47,11 @@
         <p class="pair-title">iPhone を接続</p>
         <p class="pair-hint">QRコードをiPhoneで読み取り、<strong>カメラページ</strong>を開いてください。</p>
         <code id="pairUrl">…</code>
-        <button class="btn tiny ghost" id="btnCopy">URLをコピー</button>
+        <div class="pair-actions">
+          <button class="btn tiny ghost" id="btnCopy">URLをコピー</button>
+          <button class="btn tiny ghost" id="btnTailscale">Tailscale HTTPS</button>
+        </div>
+        <p class="pair-ts" id="tsStatus"></p>
       </div>
     </div>
     <div class="metrics" id="metrics">

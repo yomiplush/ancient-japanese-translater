@@ -12,6 +12,20 @@ from . import config as config_mod
 from .config import Config
 
 
+def _urls(port: int, token: str, tailscale_url: str, path: str) -> str:
+    from . import pairing
+
+    return pairing.best_pair_url(port, token, path=path, tailscale_url=tailscale_url)
+
+
+def best_camera_url(port: int, token: str, tailscale_url: str = "") -> str:
+    return _urls(port, token, tailscale_url, "/camera")
+
+
+def best_gui_url(port: int, token: str, tailscale_url: str = "") -> str:
+    return _urls(port, token, tailscale_url, "/")
+
+
 def _print_doctor(cfg: Config) -> int:
     from .pairing import lan_ip
 
@@ -55,6 +69,20 @@ def _print_doctor(cfg: Config) -> int:
     if cfg.source_url:
         checks.append(("入力ソース", True, cfg.source_url))
 
+    from . import tailscale
+
+    ts = tailscale.probe(cfg.port)
+    if not ts.available:
+        checks.append(
+            ("Tailscale", False, "未使用 — iPhone のカメラは --https か IPカメラアプリで")
+        )
+    elif ts.https_serving:
+        checks.append(("Tailscale", True, f"HTTPS 有効: {ts.https_url}"))
+    else:
+        checks.append(
+            ("Tailscale", False, "検出済みだが HTTPS 未設定 — ajt tailscale --enable で有効化")
+        )
+
     width = max(len(name) for name, _, _ in checks)
     failed = 0
     for name, ok, detail in checks:
@@ -63,9 +91,11 @@ def _print_doctor(cfg: Config) -> int:
             failed += 1
         print(f" {mark} {name.ljust(width)}  {detail}")
 
+    camera_url = best_camera_url(cfg.port, cfg.token, ts.https_url)
+    gui_url = best_gui_url(cfg.port, cfg.token, ts.https_url)
     print()
-    print(f"ペアリングURL: http://{ip}:{cfg.port}/camera?t={cfg.token}")
-    print(f"GUI:          http://{ip}:{cfg.port}/?t={cfg.token}")
+    print(f"ペアリングURL: {camera_url}")
+    print(f"GUI:          {gui_url}")
     return 0 if failed <= 1 else 1
 
 
@@ -86,20 +116,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # Print the pairing details before uvicorn takes over the terminal: the
     # pairing endpoint only answers on loopback, so this is the reliable way to
     # get the phone connected.
+    from . import tailscale
     from .pairing import lan_ip
 
+    ts = tailscale.probe(cfg.port)
     scheme = "https" if args.https else "http"
     ip = lan_ip()
-    hint = (
-        ""
-        if args.https
-        else "  ※ iPhone のブラウザでカメラを使うには --https で起動してください\n"
-    )
+    camera_url = best_camera_url(cfg.port, cfg.token, ts.https_url)
+    hint = ""
+    if not ts.https_url and not args.https:
+        hint = (
+            "  ※ iPhone のカメラを使うには Tailscale HTTPS か --https が必要です\n"
+            "    有効化: ajt tailscale --enable\n"
+        )
     print(
         "\n  古文 → 現代口語 ライブ翻訳\n"
         f"  GUI (このPC):   {scheme}://127.0.0.1:{cfg.port}/?t={cfg.token}\n"
         f"  GUI (LAN):      {scheme}://{ip}:{cfg.port}/?t={cfg.token}\n"
-        f"  iPhone カメラ:  {scheme}://{ip}:{cfg.port}/camera?t={cfg.token}\n"
+        f"  iPhone カメラ:  {camera_url}\n"
         f"{hint}",
         flush=True,
     )
@@ -162,6 +196,42 @@ def cmd_translate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tailscale(args: argparse.Namespace) -> int:
+    from . import tailscale
+
+    config_mod.load_dotenv()
+    cfg = Config()
+    port = args.port or cfg.port
+
+    if args.enable:
+        ok, output = tailscale.enable_serve(port)
+        print(output or ("有効化しました" if ok else "失敗しました"))
+        if not ok:
+            return 1
+    elif args.disable:
+        ok, output = tailscale.disable_serve()
+        print(output or ("解除しました" if ok else "失敗しました"))
+        return 0 if ok else 1
+
+    info = tailscale.probe(port)
+    if not info.available:
+        print("Tailscale は利用できません（未インストール、または停止中）")
+        return 1
+
+    print(f"tailnet IP:   {info.ip}")
+    print(f"DNS 名:       {info.dns_name}")
+    if info.https_serving:
+        print(f"HTTPS:        有効 ({info.https_url})")
+        print(f"              -> {info.serving_target}")
+        print()
+        print("iPhone カメラURL:")
+        print(f"  {info.https_url}/camera?t={cfg.token}")
+    else:
+        print("HTTPS:        未有効")
+        print(f"  有効化: ajt tailscale --enable  (または tailscale serve --bg --https=443 http://127.0.0.1:{port})")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     config_mod.load_dotenv()
     return _print_doctor(Config())
@@ -194,6 +264,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_doc = sub.add_parser("doctor", help="環境の診断")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_ts = sub.add_parser("tailscale", help="Tailscale HTTPS の状態確認・設定")
+    p_ts.add_argument("--enable", action="store_true", help="tailscale serve を有効化")
+    p_ts.add_argument("--disable", action="store_true", help="tailscale serve を解除")
+    p_ts.add_argument("--port", type=int, help="アプリのポート")
+    p_ts.set_defaults(func=cmd_tailscale)
 
     return parser
 

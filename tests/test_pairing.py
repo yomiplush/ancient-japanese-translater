@@ -37,6 +37,30 @@ def test_qr_svg_is_svg():
     assert "<svg" in svg and "path" in svg
 
 
+def test_qr_svg_has_viewbox_so_css_can_scale_it():
+    """回帰テスト: viewBox が無いと CSS で縮小したとき切り取られて読めない。
+
+    実際にこの状態で GUI の QR がスキャン不能になっていた。
+    """
+    svg = qr_svg("http://example.test/camera?t=x")
+    assert "viewBox=" in svg
+    # 固定サイズがあると viewBox 無しで描画され、リサイズ時に crop される。
+    assert "width=" not in svg.split(">", 1)[0]
+    assert "height=" not in svg.split(">", 1)[0]
+
+
+def test_qr_png_decodes_to_the_payload():
+    """PNG も実際にデコードできること（生成だけでなく内容の検証）。"""
+    import cv2
+    import numpy as np
+
+    payload = "http://172.20.10.3:8765/camera?t=abc123"
+    png = qr_png(payload, scale=8)
+    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+    decoded, _, _ = cv2.QRCodeDetector().detectAndDecode(img)
+    assert decoded == payload
+
+
 def test_ensure_cert_generates_and_reuses(tmp_path, monkeypatch):
     monkeypatch.setenv("AJT_STATE_DIR", str(tmp_path))
     cert, key = ensure_cert(host="192.168.0.10")

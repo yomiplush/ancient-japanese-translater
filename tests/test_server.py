@@ -201,6 +201,38 @@ def test_pair_qr_png_refuses_remote_callers(client):
     assert r.status_code == 403
 
 
+def test_pair_allows_tailnet_member_via_serve(client):
+    """tailscale serve 経由の tailnet メンバーは、既に認証済みなので許可する。"""
+    with TestClient(client.app, client=("100.123.145.63", 5000)) as ts:
+        r = ts.get(
+            "/api/pair",
+            headers={
+                "Tailscale-Headers-Info": "https://tailscale.com/s/serve-headers",
+                "Tailscale-User-Login": "owner@example.com",
+            },
+        )
+    assert r.status_code == 200
+    assert r.json()["token"] == "testtoken"
+
+
+def test_pair_still_refuses_lan_with_forged_tailscale_header(client):
+    """LAN から Tailscale ヘッダを詐称しても通さない。
+
+    ヘッダを偽装しただけでは tailnet 経由とは見なさない、という境界の確認。
+    ここでは「serve のヘッダが無い」LAN 接続は引き続き拒否されることを見る。
+    """
+    with TestClient(client.app, client=("192.168.1.50", 54321)) as remote:
+        r = remote.get("/api/pair", headers={"Tailscale-User-Login": "attacker@example.com"})
+    assert r.status_code == 403
+
+
+def test_tailscale_status_requires_token(client):
+    assert client.get("/api/tailscale").status_code == 401
+    r = client.get("/api/tailscale", params={"t": "testtoken"})
+    assert r.status_code == 200
+    assert "available" in r.json()
+
+
 def test_pair_qr_png(client):
     r = client.get("/api/pair/qr.png")
     assert r.status_code == 200

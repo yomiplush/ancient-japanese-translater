@@ -31,7 +31,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from . import capture, normalize, pairing, translate
+from . import capture, normalize, pairing, tailscale, translate
 from .config import Config
 from .ocr import FrameGate, OcrEngine, preprocess_for_display
 
@@ -83,18 +83,37 @@ def _is_loopback(request: Request) -> bool:
     return client in ("127.0.0.1", "::1", "localhost", "")
 
 
+def _via_tailscale_serve(request: Request) -> bool:
+    """True when the request arrived through `tailscale serve`.
+
+    `serve` injects Tailscale-Headers-Info unconditionally, so its presence is
+    the marker that the connection was accepted and authenticated by Tailscale.
+    Note we must *not* test the peer address here: uvicorn's proxy_headers
+    handling rewrites `request.client` to the X-Forwarded-For value, so the peer
+    is the tailnet IP, not loopback.
+
+    A caller outside the tailnet cannot forge this over the tailnet, because
+    Tailscale overwrites the header set on the way in.
+    """
+    return bool(request.headers.get("tailscale-headers-info"))
+
+
+def _tailnet_identity(request: Request) -> str:
+    return (request.headers.get("tailscale-user-login") or "").strip()
+
+
 def require_pairing_access(
     request: Request,
     authorization: str | None = Header(default=None),
     t: str | None = Query(default=None),
 ) -> None:
-    """The pairing payload *is* the secret, so never hand it to the network.
+    """The pairing payload *is* the secret, so do not hand it to the world.
 
-    Anyone who can read the token can drive the camera and the API. Loopback is
-    trusted (that is the PC's own GUI); a remote caller either already holds the
-    token or must fall back to the URL printed on the PC.
+    Trusted: the PC itself (loopback GUI) and members of your own tailnet, who
+    already authenticated to Tailscale and reach us over its encrypted
+    transport. Everyone else on the LAN must present the token they were given.
     """
-    if _is_loopback(request):
+    if _is_loopback(request) or _via_tailscale_serve(request):
         return
     supplied = t or (authorization or "").removeprefix("Bearer ").strip()
     if supplied != get_state().cfg.token:
@@ -329,21 +348,64 @@ def create_app(cfg: Config | None = None, *, tls: bool = False) -> FastAPI:
         return {"ok": True}
 
     # ---------------------------------------------------------- pairing/QR
+    def _pair_url(request: Request, force_tls: bool) -> str:
+        """Best pairing URL for this request.
+
+        Prefers the tailnet HTTPS endpoint when `tailscale serve` fronts us,
+        because that is the only option iOS accepts for camera access without
+        a certificate warning. Falls back to the LAN address otherwise.
+        """
+        ts = tailscale.probe(cfg.port)
+        return pairing.best_pair_url(
+            cfg.port,
+            cfg.token,
+            tls=force_tls or tls,
+            path="/camera",
+            tailscale_url=ts.https_url,
+        )
+
     @app.get("/api/pair")
     async def pair(
+        request: Request,
         tls_flag: bool = Query(default=False, alias="tls"),
         _: None = Depends(require_pairing_access),
     ) -> dict:
-        url = pairing.candidate_urls(cfg.port, cfg.token, tls=tls_flag or tls, path="/camera")[0]
-        return {"url": url, "token": cfg.token, "svg": pairing.qr_svg(url)}
+        url = _pair_url(request, tls_flag)
+        ts = tailscale.probe(cfg.port)
+        return {
+            "url": url,
+            "token": cfg.token,
+            "svg": pairing.qr_svg(url),
+            "tailscale": ts.as_dict(),
+            "all_urls": pairing.candidate_urls(
+                cfg.port, cfg.token, tls=tls_flag or tls, tailscale_url=ts.https_url
+            ),
+        }
 
     @app.get("/api/pair/qr.png")
     async def pair_qr_png(
+        request: Request,
         tls_flag: bool = Query(default=False, alias="tls"),
         _: None = Depends(require_pairing_access),
     ) -> Response:
-        url = pairing.candidate_urls(cfg.port, cfg.token, tls=tls_flag or tls, path="/camera")[0]
+        url = _pair_url(request, tls_flag)
         return Response(pairing.qr_png(url), media_type="image/png")
+
+    @app.get("/api/tailscale")
+    async def tailscale_status(_: None = Depends(require_token)) -> dict:
+        return tailscale.probe(cfg.port).as_dict()
+
+    @app.post("/api/tailscale/enable")
+    async def tailscale_enable(_: None = Depends(require_token)) -> dict:
+        """Point `tailscale serve` at this server so the phone gets HTTPS."""
+        ok, output = await asyncio.to_thread(tailscale.enable_serve, cfg.port)
+        info = tailscale.probe(cfg.port)
+        return {"ok": ok, "output": output, "tailscale": info.as_dict()}
+
+    @app.post("/api/tailscale/disable")
+    async def tailscale_disable(_: None = Depends(require_token)) -> dict:
+        ok, output = await asyncio.to_thread(tailscale.disable_serve)
+        return {"ok": ok, "output": output}
 
     # --------------------------------------------------------------- ws
     @app.websocket("/ws")

@@ -49,32 +49,54 @@ uv run ajt serve
 
 ## iPhone 側の設定
 
-いちばん確実なのは **IP カメラアプリ方式**です。iOS の Safari は HTTPS でないと
-カメラを許可しないため、ブラウザ方式より扱いが簡単です。
+3通りあります。**Tailscale が一番おすすめ**です（理由は下記）。
+
+### 1. Tailscale HTTPS（推奨）
+
+iPhone が PC と別のネットワークにいても届き、しかも **iOS がカメラを許可する
+HTTPS** になります。証明書は Let's Encrypt の正規のものなので、警告も出ません。
+
+```bash
+ajt serve                       # PC でサーバー起動
+tailscale serve --bg --https=443 http://127.0.0.1:8765   # 初回のみ
+```
+
+GUI の「Tailscale HTTPS を有効化」ボタンからも設定できます。
+表示された QR を iPhone で読むだけで、カメラページが開きます。
+
+- iPhone 側にも Tailscale アプリが必要です（同じ tailnet にログイン）。
+- `tailscale serve` はオペレーター権限が必要です。GUI から失敗した場合は上記コマンドを
+  一度だけ実行してください。
+- PC の IP が変わっても `*.ts.net` 名は変わらないので、QR を作り直す必要がありません。
+
+### 2. IP カメラアプリ方式
+
+アプリが MJPEG / JPEG を配信し、PC がそれを取り込みます。ブラウザのカメラ許可が
+不要なため、HTTPS なしでも動きます。
 
 1. App Store で「IP Camera」系アプリ（例: *IP Camera Lite*, *IP Webcam*）を入れます。
-2. アプリを起動し、表示される URL（例 `http://192.168.0.12:8080/video`）を控えます。
-3. PC の `.env` に設定します。
+2. アプリが表示する URL（例 `http://192.168.0.12:8080/video`）を控えます。
+3. PC の `.env` に設定して `ajt serve` を再起動します。
 
 ```env
 AJT_SOURCE_URL=http://192.168.0.12:8080/video
 ```
 
-4. `ajt serve` を再起動すると、PC 側から自動でフレームを取り込み始めます。
+スナップショット JPEG だけを返すアプリ（`.../shot.jpg` 等）でも自動判別してポーリングします。
 
-アプリが MJPEG を出さず **スナップショット JPEG** だけを返す場合も、自動判別して
-ポーリングします。URL は `.../shot.jpg` のような形であることが多いです。
+### 3. LAN 内の HTTPS（自己署名）
 
-### ブラウザ方式（HTTPS）
-
-アプリを入れずに済ませたい場合は、同梱のカメラページを使います。
+Tailscale を使わず、同一 LAN 内だけで完結させる場合です。
 
 ```bash
 uv run ajt serve --https
 ```
 
-PC の GUI に出る QR を iPhone で読み取り、`https://<PCのIP>:8765/camera?t=...` を
-開きます。自己署名証明書なので、初回だけ警告を承認してください。
+初回だけ自己署名証明書の警告を承認する必要があります。
+
+> **なぜ HTTPS が必要か**: iOS Safari は安全なコンテキスト（HTTPS）でしか
+> `getUserMedia` を許可しません。素の `http://` で開くとカメラボタンが動きません。
+> Tailscale を使わない場合は 2 か 3 を選んでください。
 
 ## 使い方
 

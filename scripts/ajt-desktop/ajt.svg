@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2419"/>
+      <stop offset="1" stop-color="#15130e"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f0cf8a"/>
+      <stop offset="1" stop-color="#c08c33"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="none" stroke="#4a3a21" stroke-width="6"/>
+  <!-- 文 in a brush-like gold, with a subtle underline evoking a text column -->
+  <text x="256" y="322" text-anchor="middle"
+        font-family="Noto Serif CJK JP, Hiragino Mincho ProN, serif"
+        font-size="300" font-weight="500" fill="url(#gold)">文</text>
+  <rect x="128" y="392" width="256" height="8" rx="4" fill="#8fb3a1" opacity="0.55"/>
+</svg>

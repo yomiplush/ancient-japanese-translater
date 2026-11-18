@@ -36,13 +36,34 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
-def candidate_urls(port: int, token: str, tls: bool = False, path: str = "/camera") -> list[str]:
+def candidate_urls(
+    port: int,
+    token: str,
+    tls: bool = False,
+    path: str = "/camera",
+    tailscale_url: str = "",
+) -> list[str]:
+    """Pairing URLs, most useful first.
+
+    A tailnet HTTPS URL wins when available: it works from any network the
+    phone is on, and iOS only allows camera access on HTTPS, so it is the only
+    option that needs neither a self-signed warning nor an IP-camera app.
+    """
+    urls: list[str] = []
+    if tailscale_url:
+        urls.append(f"{tailscale_url.rstrip('/')}{path}?t={token}")
     scheme = "https" if tls else "http"
     host = lan_ip()
-    urls = [f"{scheme}://{host}:{port}{path}?t={token}"]
+    urls.append(f"{scheme}://{host}:{port}{path}?t={token}")
     if host != "127.0.0.1":
         urls.append(f"{scheme}://127.0.0.1:{port}{path}?t={token}")
     return urls
+
+
+def best_pair_url(
+    port: int, token: str, tls: bool = False, path: str = "/camera", tailscale_url: str = ""
+) -> str:
+    return candidate_urls(port, token, tls=tls, path=path, tailscale_url=tailscale_url)[0]
 
 
 def qr_png(data: str, scale: int = 6) -> bytes:
@@ -52,8 +73,16 @@ def qr_png(data: str, scale: int = 6) -> bytes:
     return buf.getvalue()
 
 
-def qr_svg(data: str) -> str:
-    return segno.make(data, error="m").svg_inline(scale=4, border=2)
+def qr_svg(data: str, scale: int = 4) -> str:
+    """Inline SVG QR.
+
+    ``omitsize=True`` is load-bearing, not cosmetic: without it segno emits
+    ``width``/``height`` but no ``viewBox``, so any CSS that resizes the image
+    crops the code instead of scaling it (the page showed only the top-left
+    finder pattern and no scanner could read it). Omitting the fixed size
+    forces a ``viewBox``, which scales correctly.
+    """
+    return segno.make(data, error="m").svg_inline(scale=scale, border=2, omitsize=True)
 
 
 def _cert_covers(cert_path: Path, host: str) -> bool:
