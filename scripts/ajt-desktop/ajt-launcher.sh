@@ -59,24 +59,48 @@ open_gui() {
     xdg-open "$url" >/dev/null 2>&1 &
 }
 
+pids_on_port() {
+    # Fallback discovery for servers started outside the launcher (e.g. from a
+    # terminal), which have no PID file. `ss -p` needs the owning user's
+    # privileges, which we have for our own processes.
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp 2>/dev/null |
+            awk -v p=":$1" '$4 ~ p {print}' |
+            grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u
+    fi
+}
+
 stop_server() {
     local stopped=0
+    local pids=""
+
     if [ -f "$PID_FILE" ]; then
         local pid
         pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-        if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
-            # `ajt serve` runs uvicorn in-process, so this PID *is* the server.
-            # SIGTERM lets uvicorn close cleanly; escalate if it ignores us.
-            kill "$pid" 2>/dev/null && stopped=1
-            for _ in $(seq 1 40); do
-                kill -0 "$pid" 2>/dev/null || break
-                sleep 0.1
-            done
-            kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-            stopped=1
-        fi
+        [ -n "${pid:-}" ] && pids="$pid"
         rm -f "$PID_FILE"
     fi
+
+    # Also cover a server running on any port in our range without a PID file.
+    local p
+    for p in $(seq "$PORT" "$PORT_LAST"); do
+        if health "$p" >/dev/null; then
+            pids="$pids $(pids_on_port "$p")"
+        fi
+    done
+
+    for pid in $pids; do
+        [ -n "$pid" ] || continue
+        kill -0 "$pid" 2>/dev/null || continue
+        # SIGTERM lets uvicorn close cleanly; escalate if it ignores us.
+        kill "$pid" 2>/dev/null && stopped=1
+        for _ in $(seq 1 40); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    done
+
     if [ "$stopped" -eq 1 ]; then
         notify "サーバーを停止しました"
     else
